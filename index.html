@@ -623,9 +623,15 @@
       return dp[a.length][b.length];
     }
 
+    function softPhoneticEs(str) {
+      // Intervocalic Spanish 'd' [ð] and tapped 'r' [ɾ] are acoustically very close (e.g. "todo" vs "toro")
+      return phoneticEs(str).replace(/[dr]/g, "D");
+    }
+
     function matchesSpanish(transcripts, target) {
       const normTarget = normalizeEs(target);
       const phonTarget = phoneticEs(target).replace(/\s+/g, "");
+      const softTarget = softPhoneticEs(target).replace(/\s+/g, "");
       for (const raw of transcripts) {
         const norm = normalizeEs(raw);
         if (!norm) continue;
@@ -637,7 +643,13 @@
         const phonFull = phoneticEs(raw).replace(/\s+/g, "");
         if (phonFull === phonTarget) return true;
         if (tokens.some(tok => phoneticEs(tok) === phonTarget)) return true;
-        if (phonTarget.length >= 5 && editDistance(phonFull, phonTarget) <= 1) return true;
+
+        // Soft consonant match (e.g. "todo" <-> "toro", "cada" <-> "cara", "nada" <-> "nara")
+        const softFull = softPhoneticEs(raw).replace(/\s+/g, "");
+        if (softFull === softTarget) return true;
+        if (tokens.some(tok => softPhoneticEs(tok) === softTarget)) return true;
+
+        if (phonTarget.length >= 4 && editDistance(phonFull, phonTarget) <= 1) return true;
       }
       return false;
     }
