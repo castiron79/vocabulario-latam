@@ -580,15 +580,57 @@
       return t === "stop testing" || t === "stop" || t === "stop test" || t === "detener" || t === "parar";
     }
 
+    function isSkipCommand(transcript) {
+      const t = normalizeEs(transcript);
+      return t === "skip" || t === "siguiente" || t === "saltar" || t === "next";
+    }
+
+    function phoneticEs(str) {
+      return normalizeEs(str)
+        .replace(/ch/g, "CH")
+        .replace(/h/g, "")
+        .replace(/CH/g, "ch")
+        .replace(/v/g, "b")
+        .replace(/z/g, "s")
+        .replace(/c([ei])/g, "s$1")
+        .replace(/qu/g, "k")
+        .replace(/c(?![h])/g, "k")
+        .replace(/g([ei])/g, "j$1")
+        .replace(/ll/g, "y")
+        .replace(/([a-z])\1+/g, "$1");
+    }
+
+    function editDistance(a, b) {
+      if (Math.abs(a.length - b.length) > 1) return 99;
+      const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+      for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+      for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+          dp[i][j] = Math.min(
+            dp[i - 1][j] + 1,
+            dp[i][j - 1] + 1,
+            dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+          );
+        }
+      }
+      return dp[a.length][b.length];
+    }
+
     function matchesSpanish(transcripts, target) {
       const normTarget = normalizeEs(target);
+      const phonTarget = phoneticEs(target).replace(/\s+/g, "");
       for (const raw of transcripts) {
         const norm = normalizeEs(raw);
         if (!norm) continue;
         if (norm === normTarget) return true;
-        // Also accept if user spoke a short phrase containing the exact word (e.g. "el perro" for "perro")
         const tokens = norm.split(/\s+/);
         if (tokens.includes(normTarget)) return true;
+
+        // Phonetic homophone match (e.g. "haber" <-> "a ver", "vez" <-> "ves", "hola" <-> "ola")
+        const phonFull = phoneticEs(raw).replace(/\s+/g, "");
+        if (phonFull === phonTarget) return true;
+        if (tokens.some(tok => phoneticEs(tok) === phonTarget)) return true;
+        if (phonTarget.length >= 5 && editDistance(phonFull, phonTarget) <= 1) return true;
       }
       return false;
     }
@@ -791,18 +833,20 @@
           await speakText(vtWord.s, "es-MX");
           if (!vtRunning) break;
 
-          // Wait for user to repeat it once
+          // Wait for user to repeat it once (max 2 tries so user never gets stuck)
           vtState = "LISTENING_REPEAT";
-          setVoiceUI(`Say "${vtWord.s}" once to continue…`, 'Or say "stop testing" / click Skip', true);
+          setVoiceUI(`Say "${vtWord.s}" once to continue…`, 'Or say "skip" / "stop testing"', true);
           let repeated = false;
-          while (vtRunning && !repeated) {
+          let attempts = 0;
+          while (vtRunning && !repeated && attempts < 2) {
+            attempts++;
             const repRes = await waitForManualOrVoice(listenOnce());
             if (!vtRunning) break;
             if (repRes.transcripts.some(isStopCommand)) {
               stopVoiceTesting('Stopped by voice command ("stop testing").');
               return;
             }
-            if (repRes.status === "skipped") {
+            if (repRes.status === "skipped" || repRes.transcripts.some(isSkipCommand)) {
               repeated = true;
               break;
             }
@@ -814,10 +858,12 @@
               document.getElementById("vt-feedback").textContent = "✓ Good! Moving on…";
               document.getElementById("vt-feedback").className = "text-xs font-semibold min-h-[18px] pt-1 text-[var(--success)]";
               await new Promise(r => setTimeout(r, 650));
-            } else {
-              // Play it once more softly if they didn't match, then let them try again
-              setVoiceUI(`Try saying "${vtWord.s}" again…`, "Or click Skip →", true);
+            } else if (attempts < 2) {
+              setVoiceUI(`Try saying "${vtWord.s}" again…`, 'Or say "skip" / click Skip →', true);
               await speakText(vtWord.s, "es-MX");
+            } else {
+              document.getElementById("vt-feedback").textContent = "Moving to next word…";
+              await new Promise(r => setTimeout(r, 500));
             }
           }
         }
