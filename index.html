@@ -236,7 +236,11 @@
           <span class="text-[var(--muted-foreground)]">Spanish Voice:</span>
           <select id="voice-select-es" class="bg-[var(--background)] text-[var(--foreground)] border border-[var(--border)] rounded-md px-2 py-1 max-w-[240px]"></select>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-4">
+          <label class="flex items-center gap-1.5 cursor-pointer text-[var(--muted-foreground)]">
+            <input id="chk-wake-lock" type="checkbox" checked class="accent-[var(--primary)]" />
+            Keep screen awake
+          </label>
           <label class="flex items-center gap-1.5 cursor-pointer text-[var(--muted-foreground)]">
             <input id="chk-auto-fallback" type="checkbox" checked class="accent-[var(--primary)]" />
             Show type-answer box during test
@@ -665,9 +669,34 @@
       document.getElementById("vt-fallback-form").classList.toggle("hidden", !show);
     }
 
+    let wakeLockSentinel = null;
+    async function requestWakeLock() {
+      if (!("wakeLock" in navigator) || !document.getElementById("chk-wake-lock").checked) return;
+      try {
+        if (!wakeLockSentinel) {
+          wakeLockSentinel = await navigator.wakeLock.request("screen");
+          wakeLockSentinel.addEventListener("release", () => { wakeLockSentinel = null; });
+        }
+      } catch (e) {}
+    }
+    function releaseWakeLock() {
+      if (wakeLockSentinel) {
+        try { wakeLockSentinel.release(); } catch (e) {}
+        wakeLockSentinel = null;
+      }
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && vtRunning) requestWakeLock();
+    });
+    document.getElementById("chk-wake-lock").addEventListener("change", (e) => {
+      if (!e.target.checked) releaseWakeLock();
+      else if (vtRunning) requestWakeLock();
+    });
+
     function stopVoiceTesting(reason = "Testing stopped.") {
       vtRunning = false;
       vtState = "IDLE";
+      releaseWakeLock();
       if ("speechSynthesis" in window) speechSynthesis.cancel();
       if (activeRec) {
         try { activeRec.abort(); } catch (e) {}
@@ -764,6 +793,7 @@
 
     async function runVoiceLoop() {
       vtRunning = true;
+      requestWakeLock();
       vtSessionCount = 0;
       vtSessionKnown = 0;
       vtSessionMiss = 0;
