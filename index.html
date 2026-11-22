@@ -709,7 +709,7 @@
       updateFallbackBoxVisibility();
     }
 
-    function listenOnce() {
+    function listenOnce(maxSilenceMs = 0) {
       return new Promise((resolve) => {
         if (!SpeechRec || micBlocked) {
           resolve({ status: "unavailable", transcripts: [] });
@@ -722,12 +722,26 @@
         rec.maxAlternatives = 5;
 
         let settled = false;
+        let silenceTimer = null;
+        const clearTimer = () => {
+          if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+        };
         const finish = (res) => {
           if (settled) return;
           settled = true;
+          clearTimer();
           activeRec = null;
           resolve(res);
         };
+
+        if (maxSilenceMs > 0) {
+          silenceTimer = setTimeout(() => {
+            try { rec.abort(); } catch (e) {}
+            finish({ status: "nomatch", transcripts: [] });
+          }, maxSilenceMs);
+        }
+
+        rec.onspeechstart = clearTimer;
 
         rec.onresult = (event) => {
           const transcripts = [];
@@ -828,11 +842,15 @@
         await speakText(vtWord.e, "en-US");
         if (!vtRunning) break;
 
-        // 2. Listen for Spanish answer
+        // 2. Listen for Spanish answer (with +1.3s grace window if Chrome times out on silence)
         vtState = "LISTENING_ANSWER";
         setVoiceUI("Listening for Spanish…", 'Speak now (or say "stop testing")', true);
-        const ansRes = await waitForManualOrVoice(listenOnce());
+        let ansRes = await waitForManualOrVoice(listenOnce());
         if (!vtRunning) break;
+        if (ansRes.status === "nomatch") {
+          ansRes = await waitForManualOrVoice(listenOnce(1300));
+          if (!vtRunning) break;
+        }
 
         if (ansRes.transcripts.some(isStopCommand)) {
           stopVoiceTesting('Stopped by voice command ("stop testing").');
